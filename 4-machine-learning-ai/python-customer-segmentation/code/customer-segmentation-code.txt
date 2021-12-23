@@ -1,0 +1,617 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# # Import Libraries
+
+# In[52]:
+
+
+import pandas as pd
+import numpy as np
+import seaborn as sns 
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+
+from sklearn.metrics import silhouette_score, silhouette_samples
+import sklearn.metrics
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering
+from sklearn.mixture import GaussianMixture
+from yellowbrick.cluster import SilhouetteVisualizer, InterclusterDistance, KElbowVisualizer
+
+#PowerTransformer for Yeo-Johnson and Box-Cox
+from sklearn.preprocessing import PowerTransformer
+pt = PowerTransformer()
+import scipy
+import itertools
+from sklearn import datasets
+from pyclustertend import hopkins
+from sklearn.preprocessing import scale
+
+from IPython.core.interactiveshell import InteractiveShell
+InteractiveShell.ast_node_interactivity = "all"
+
+
+# # Import CSV for scene datasets
+
+# In[73]:
+
+
+df = pd.read_csv("C:/Users/JHo/Desktop/Queens GMMA/GMMA 869/Data/combined_data_v7.csv")
+pd.options.display.max_rows = 4000
+df.describe().transpose()
+
+
+# In[ ]:
+
+
+#view
+df.info()
+df.shape
+df.head(n=5)
+
+
+# In[74]:
+
+
+#replace rows in total_points_earned that have 0 with NaN
+df['total_points_earned'] = df['total_points_earned'].replace(0,np.NaN)
+#view
+df.isnull().any()
+df.isnull().sum().sum() #71 Nan created in total_points_earned
+
+
+# In[76]:
+
+
+#drop the NaN rows 
+df = df.dropna()
+
+
+# In[77]:
+
+
+#Make New Calculated Features 
+df['total_cineplex_transactions'] = df['total_blackcard_transactions']+df['cineplex_pos_transactions']
+df['cineplex_transactions_ratio'] = df['total_cineplex_transactions']/df['total_transactions']
+df['weekday_burn'] = abs(df['total_pts_burn_monday']) + abs(df['total_pts_burn_tuesday']) + abs(df['total_pts_burn_wednesday']) + abs(df['total_pts_burn_thursday'])
+df['weekday_earn'] = abs(df['total_pts_earn_monday']) + abs(df['total_pts_earn_tuesday']) + abs(df['total_pts_earn_wednesday']) + abs(df['total_pts_earn_thursday'])
+df['weekend_burn'] = abs(df['total_pts_burn_friday']) + abs(df['total_pts_burn_saturday']) + abs(df['total_pts_burn_sunday'])
+df['weekend_earn'] = abs(df['total_pts_earn_friday']) + abs(df['total_pts_earn_saturday']) + abs(df['total_pts_earn_sunday'])
+df['weekend_burn_ratio'] = df['weekend_burn']/(df['total_points_earned'])
+df['weekday_burn_ratio'] = df['weekday_burn']/(df['total_points_earned'])
+
+
+# # Identification of Features for clustering
+
+# In[78]:
+
+
+#***** Add features to be selected here based on either scaled or YEO*******
+
+#Nic's best features:
+# Xc = df[['Age','last_txn_date','blackcard_transaction_percentage', 'burn_ratio', 'total_cineplex_spend', 'avg_spend_per_transaction','total_cara_points_earned']].copy()
+# features_yeo = ['Age' ,'last_txn_date', 'burn_ratio', 'total_cineplex_spend', 'avg_spend_per_transaction', 'total_cara_points_earned']
+
+
+# Nicole best features:
+# features_yeo = ['Age' ,'last_txn_date', 'total_cineplex_spend', 'avg_spend_per_transaction','total_cara_points_earned', 'total_cara_points_burned']
+# Xc = df[['Age','blackcard_transaction_percentage','total_cara_points_earned', 'total_cara_points_burned', 'weekend_pts_ratio', 'avg_spend_per_transaction', 'total_cineplex_spend', 'last_txn_date']].copy()
+
+#Final
+Xc = df[['Age','last_txn_date','blackcard_transaction_percentage', 'weekday_burn_ratio', 'weekend_burn_ratio', 'total_cineplex_spend', 'avg_spend_per_transaction']].copy()
+features_yeo = ['Age' ,'last_txn_date','blackcard_transaction_percentage', 'weekday_burn_ratio', 'weekend_burn_ratio','total_cineplex_spend', 'avg_spend_per_transaction']
+
+#Xc[features] = scaler.fit_transform(Xc[features])
+Xc[features_yeo] = pt.transform(Xc[features_yeo])
+
+#scale and normzlize
+scaler = StandardScaler()
+pt.fit(Xc[features_yeo])
+
+
+# In[16]:
+
+
+#Clusterability of Dataset
+X = scale(Xc)
+hopkins(X,150)
+
+
+# # Summary of Variables & Correlation Plot
+
+# In[79]:
+
+
+#Correlation plot to pull features correlated with Purchase 
+corrmat = Xc.corr()
+top_corr_features = corrmat.index
+plt.figure(figsize=(20,20))
+#plot heat map
+g=sns.heatmap(Xc[top_corr_features].corr(),annot=True,cmap="RdBu_r")
+
+
+# # Generation of Inertia and Sillouette Graphs (Eucledian and Cosine)
+
+# In[80]:
+
+
+inertias = {}
+silhouettes = {}
+
+#***Choose range for # of clusters to be tested***
+rmin = 2
+rmax = 19
+
+for k in range(rmin, rmax):
+    kmeans = KMeans(init='k-means++', n_init=10, n_clusters=k, max_iter=100, random_state=1337).fit(Xc)
+    inertias[k] = kmeans.inertia_ # Inertia: Sum of distances of samples to their closest cluster center
+    silhouettes[k] = silhouette_score(Xc, kmeans.labels_, metric='euclidean')
+
+#plt.rcParams['axes.facecolor'] = 'black'
+plt.figure();
+plt.grid(True);
+plt.plot(list(inertias.keys()), list(inertias.values()));
+plt.title('K-Means, Elbow Method, Euclidean')
+plt.xlabel("Number of clusters, K");
+plt.ylabel("Inertia");
+plt.show()
+#plt.savefig('out/V5-Eucledian_kmeans-elbow-interia.png');
+
+
+plt.figure();
+plt.grid(True);
+plt.plot(list(silhouettes.keys()), list(silhouettes.values()));
+plt.title('K-Means, Elbow Method, Euclidean')
+plt.xlabel("Number of clusters, K");
+plt.ylabel("Silhouette");
+plt.show()
+#plt.savefig('out/V5-Eucledian_kmeans-elbow-silhouette.png');
+
+
+
+# # K-Mean Cluster to be used
+
+# In[81]:
+
+
+#K-means model
+k_meansXc = KMeans(init = 'k-means++', n_clusters=9, n_init=10, random_state=1337)
+k_meansXc.fit(Xc)
+
+
+# In[82]:
+
+
+#WCSS
+k_meansXc.inertia_
+
+
+# In[83]:
+
+
+#Silhouette
+silhouette_score(Xc, k_meansXc.labels_)
+
+
+# # Relative Importance Plot
+
+# In[65]:
+
+
+#Relative Importance Plot
+import seaborn as sns
+
+datXc = Xc.copy()
+
+datXc['Cluster'] = k_meansXc.labels_
+
+cluster_avg = datXc.groupby(['Cluster']).mean()
+population_avg = datXc.drop(['Cluster'], axis=1).mean()
+
+relative_imp = cluster_avg - population_avg
+
+
+plt.figure(figsize=(20, 10));
+plt.title('Relative importance of features');
+sns.heatmap(data=relative_imp, annot=True, fmt='.2f', cmap='RdYlGn');
+plt.show()
+
+
+# # Snake Plot for K-Means
+
+# In[84]:
+
+
+#make sure to change the labels as you add/delete variables, as well as title k=x
+
+datXc['Cluster'] = k_meansXc.labels_
+
+datamart_melt = pd.melt(datXc.reset_index(),
+id_vars=['Cluster'],value_vars=['Age', 'last_txn_date', 'blackcard_transaction_percentage',
+        'weekend_burn_ratio', 'weekday_burn_ratio','total_cineplex_spend',
+       'avg_spend_per_transaction'], var_name='Feature',value_name='Value')
+
+plt.xticks(rotation=45)
+plt.figure(figsize=(15, 9))
+plt.title('Snake Plot, K-Means, K=9')
+sns.lineplot(x="Feature", y="Value", hue='Cluster', data=datamart_melt)
+
+
+
+
+# # Cluster Mean Description 
+
+# In[85]:
+
+
+for label in set(k_meansXc.labels_):
+    print('\nCluster {}:'.format(label))
+    Xc_tmp = Xc[k_meansXc.labels_==label].copy()
+    #Xc_tmp[features] = scaler.inverse_transform(Xc_tmp[features])
+    Xc_tmp[features_yeo] = pt.inverse_transform(Xc_tmp[features_yeo])
+    Xc_tmp.loc['mean'] = Xc_tmp.mean()
+    Xc_tmp.tail(1)
+
+
+# # Examplar Value for each Cluster
+
+# In[86]:
+
+
+from scipy.spatial import distance
+
+for i, label in enumerate(set(k_meansXc.labels_)):    
+    Xc_tmp = Xc[k_meansXc.labels_==label].copy()
+    #Xc_tmp[features] = scaler.inverse_transform(Xc_tmp[features])
+    Xc_tmp[features_yeo] = pt.inverse_transform(Xc_tmp[features_yeo])
+    exemplar_idx = distance.cdist([k_meansXc.cluster_centers_[i]], Xc_tmp).argmin()
+    exemplar = pd.DataFrame(Xc_tmp.iloc[exemplar_idx])
+   
+    print('\nCluster {}:'.format(label))
+    exemplar
+
+
+# # Relative Feature Importance Plot
+
+# In[87]:
+
+
+import seaborn as sns
+
+datXc = Xc.copy()
+
+datXc['Cluster'] = k_meansXc.labels_
+
+cluster_avg = datXc.groupby(['Cluster']).mean()
+population_avg = datXc.drop(['Cluster'], axis=1).mean()
+
+relative_imp = cluster_avg - population_avg
+
+
+plt.figure(figsize=(20, 10));
+plt.title('Relative importance of features');
+sns.heatmap(data=relative_imp, annot=True, fmt='.2f', cmap='RdYlGn');
+plt.show()
+#plt.savefig('out/V5_6c-Relative_Importance_Matrix.png', transparent=False);
+
+
+# # Description of clusters
+
+# In[88]:
+
+
+kmeans.inertia_ # Inertia: Sum of distances of samples to their closest cluster center
+silhouette_score(Xc, kmeans.labels_, metric='euclidean')
+
+
+# In[89]:
+
+
+Xc.head(1)
+
+
+# In[90]:
+
+
+pd.options.display.max_rows = 4000
+
+#def describe_clusters(X, labels, features, features_yeo):
+def describe_clusters(X, labels, features_yeo):
+    X2 = X.copy()
+    X2['ClusterID'] = labels
+    #X2[features] = scaler.inverse_transform(X[features])
+    X2[features_yeo] = pt.inverse_transform(X[features_yeo])
+    X2 = pd.concat([X2, df['AttendsWithChild_tendancy']], axis=1)
+    X2 = pd.concat([X2, df['ConcessionPurchaser_tendancy']], axis=1)
+    X2 = pd.concat([X2, df['OnlineTicketPurchaser_tendancy']], axis=1)
+    X2 = pd.concat([X2, df['OpensEmail_tendancy']], axis=1)
+    X2 = pd.concat([X2, df['TuesdayAttendee_tendancy']], axis=1)
+    X2 = pd.concat([X2, df['WeekdayMatineeViewer_tendancy']], axis=1)
+    X2 = pd.concat([X2, df['WeekendMatineeViewer_tendancy']], axis=1)
+    X2 = pd.concat([X2, df['isBNS_VCL']], axis=1)
+
+    X2 = pd.concat([X2, df['total_cineplex_transactions']], axis=1)
+    X2 = pd.concat([X2, df['total_points_earned']], axis=1)
+    X2 = pd.concat([X2, df['total_points_burned']], axis=1)
+    X2 = pd.concat([X2, df['total_weekend_points']], axis=1)
+    X2 = pd.concat([X2, df['cineplex_points_tuesday']], axis=1)
+    X2 = pd.concat([X2, df['total_cara_points_earned']], axis=1)
+    X2 = pd.concat([X2, df['total_cara_points_burned']], axis=1)
+
+    print('\nCluster sizes:')
+    print(X2.groupby('ClusterID').size())
+        
+    print('\nCluster stats:')
+    with pd.option_context('float_format', '{:.2f}'.format): display(X2.groupby('ClusterID').describe(include='all').transpose())
+
+
+# In[91]:
+
+
+describe_clusters(Xc, k_meansXc.labels_, features_yeo)
+
+
+# # Descriptions of Cluster Means
+
+# In[94]:
+
+
+#Print this block if you want an overview of the descriptions of the clusters in Python
+pd.options.display.max_columns = 40
+
+#def describe_clusters(X, labels, features, features_yeo):
+def describe_clusters2(X, labels, features_yeo):
+    X2 = X.copy()
+    X2['ClusterID'] = labels
+    #X2[features] = scaler.inverse_transform(X[features])
+    X2[features_yeo] = pt.inverse_transform(X[features_yeo])
+    X2 = pd.concat([X2, df['AttendsWithChild_tendancy']], axis=1)
+    X2 = pd.concat([X2, df['ConcessionPurchaser_tendancy']], axis=1)
+    X2 = pd.concat([X2, df['OnlineTicketPurchaser_tendancy']], axis=1)
+    X2 = pd.concat([X2, df['OpensEmail_tendancy']], axis=1)
+    X2 = pd.concat([X2, df['TuesdayAttendee_tendancy']], axis=1)
+    X2 = pd.concat([X2, df['WeekdayMatineeViewer_tendancy']], axis=1)
+    X2 = pd.concat([X2, df['WeekendMatineeViewer_tendancy']], axis=1)
+    X2 = pd.concat([X2, df['isBNS_VCL']], axis=1)
+
+    X2 = pd.concat([X2, df['total_cineplex_transactions']], axis=1)
+    X2 = pd.concat([X2, df['total_points_earned']], axis=1)
+    X2 = pd.concat([X2, df['total_points_burned']], axis=1)
+    X2 = pd.concat([X2, df['total_weekend_points']], axis=1)
+    X2 = pd.concat([X2, df['cineplex_points_tuesday']], axis=1)
+    X2 = pd.concat([X2, df['total_cara_points_earned']], axis=1)
+    X2 = pd.concat([X2, df['total_cara_points_burned']], axis=1)
+
+    print('\nCluster sizes:')
+    print(X2.groupby('ClusterID').size())
+        
+    print('\nCluster stats:')
+    with pd.option_context('float_format', '{:.2f}'.format): display(X2.groupby('ClusterID').mean())
+        
+describe_clusters2(Xc, k_meansXc.labels_, features_yeo)
+
+
+# In[97]:
+
+
+# Print this if you want the excel with clusters #s print dataframe with cluster label to csv
+X2 = df.copy()
+X2['total_points_earned'] = X2['total_points_earned'].replace(0,np.NaN)
+X2 = df.dropna()
+X2['ClusterID'] = k_meansXc.labels_
+   
+my_submission = pd.DataFrame(X2)
+
+my_submission.head()
+my_submission.to_csv("cluster_data.csv", index = False)
+
+
+# # DBSCAN
+
+# ## Elbow Multiple Epsilon and MinPts plt (Big Compute)
+# 
+
+# ## DBSCAN loop to identify values
+
+# In[44]:
+
+
+silhouettes = {}
+
+epss = np.arange(0.1, 0.9, 0.1)
+minss = [3, 4, 5, 6, 7, 8, 9, 10]
+
+ss = np.zeros((len(epss), len(minss)))
+
+for i, eps in enumerate(epss):
+    for j, mins in enumerate(minss):
+        db = DBSCAN(eps=eps, min_samples=mins).fit(Xc)
+        if len(set(db.labels_)) == 1:
+            ss[i, j] = -1
+        else:
+            ss[i, j] = silhouette_score(Xc, db.labels_, metric='euclidean')
+    
+
+plt.figure();
+#plt.plot(list(silhouettes.keys()), list(silhouettes.values()));
+for i in range(len(minss)):
+    plt.plot(epss, ss[:, i], label="MinPts = {}".format(minss[i]));
+#plt.plot(epss, ss[:, 1]);
+plt.title('DBSCAN, Elbow Method')
+plt.xlabel("Eps");
+plt.ylabel("Silhouette");
+plt.legend();
+#plt.savefig('out/simple_dbscan_elbow');
+
+
+# In[47]:
+
+
+def DBSCAN_PARAM_EXP(X, eps, min_samples):
+    db = DBSCAN(eps=eps, min_samples=min_samples).fit(Xc)
+
+    unique_labels = set(db.labels_)
+    n_clusters = len(unique_labels) - 1
+    
+    if n_clusters <= 1:
+        #print('eps={}, min_samples={}, n_clusters <= 1. Returning.'.format(eps, min_samples))
+        #return
+        sil = -1
+    else:
+        sil = silhouette_score(Xc, db.labels_)
+    
+    print("eps={}, min_samples={}, n_clusters={}, sil={}".format(eps, min_samples, n_clusters, sil))
+
+DBSCAN_PARAM_EXP(Xc, 0.5, 9)
+DBSCAN_PARAM_EXP(Xc, 0.6, 7)
+DBSCAN_PARAM_EXP(Xc, 0.7, 9)
+
+
+# # Identification of DBSCAN cluster Variables
+
+# In[41]:
+
+
+db = DBSCAN(eps=0.2, min_samples=16)
+db.fit(Xc)
+
+
+# In[42]:
+
+
+silhouette_score(Xc, db.labels_)
+
+
+# # Heirarchical Optimization Test
+
+# In[20]:
+
+
+#6 cluster test
+def plot_agg(X, linkage, metric):
+    aggl = scipy.cluster.hierarchy.linkage(X, method=linkage, metric=metric)
+    
+    labels = scipy.cluster.hierarchy.fcluster(aggl, 6, criterion="maxclust")
+    
+    sil = 0
+    n = len(set(labels))
+    if n > 1:
+        sil = silhouette_score(X , labels, metric=metric)
+    print("Linkage={}, Metric={}, Clusters={}, Silhouette={:.3}".format(linkage, metric, n, sil))
+    
+    
+linkages = ['complete', 'ward', 'single', 'centroid', 'average']
+metrics = ['euclidean', 'minkowski', 'cityblock', 'cosine', 'correlation', 'chebyshev', 'canberra', 'mahalanobis']
+
+for prod in list(itertools.product(linkages, metrics)):
+    
+    # Some combos are not allowed
+    if (prod[0] in ['ward', 'centroid']) and prod[1] != 'euclidean':
+        continue
+        
+    plot_agg(Xc, prod[0], prod[1])
+
+
+# In[19]:
+
+
+#7 cluster test
+def plot_agg(X, linkage, metric):
+    aggl = scipy.cluster.hierarchy.linkage(X, method=linkage, metric=metric)
+    
+    labels = scipy.cluster.hierarchy.fcluster(aggl, 7, criterion="maxclust")
+    
+    sil = 0
+    n = len(set(labels))
+    if n > 1:
+        sil = silhouette_score(X , labels, metric=metric)
+    print("Linkage={}, Metric={}, Clusters={}, Silhouette={:.3}".format(linkage, metric, n, sil))
+    
+    
+linkages = ['complete', 'ward', 'single', 'centroid', 'average']
+metrics = ['euclidean', 'minkowski', 'cityblock', 'cosine', 'correlation', 'chebyshev', 'canberra', 'mahalanobis']
+
+for prod in list(itertools.product(linkages, metrics)):
+    
+    # Some combos are not allowed
+    if (prod[0] in ['ward', 'centroid']) and prod[1] != 'euclidean':
+        continue
+        
+    plot_agg(Xc, prod[0], prod[1])
+
+
+# In[17]:
+
+
+#8 cluster test
+def plot_agg(X, linkage, metric):
+    aggl = scipy.cluster.hierarchy.linkage(X, method=linkage, metric=metric)
+    
+    labels = scipy.cluster.hierarchy.fcluster(aggl, 8, criterion="maxclust")
+    
+    sil = 0
+    n = len(set(labels))
+    if n > 1:
+        sil = silhouette_score(X , labels, metric=metric)
+    print("Linkage={}, Metric={}, Clusters={}, Silhouette={:.3}".format(linkage, metric, n, sil))
+    
+    
+linkages = ['complete', 'ward', 'single', 'centroid', 'average']
+metrics = ['euclidean', 'minkowski', 'cityblock', 'cosine', 'correlation', 'chebyshev', 'canberra', 'mahalanobis']
+
+for prod in list(itertools.product(linkages, metrics)):
+    
+    # Some combos are not allowed
+    if (prod[0] in ['ward', 'centroid']) and prod[1] != 'euclidean':
+        continue
+        
+    plot_agg(Xc, prod[0], prod[1])
+
+
+# In[13]:
+
+
+#9 cluster test
+def plot_agg(X, linkage, metric):
+    aggl = scipy.cluster.hierarchy.linkage(X, method=linkage, metric=metric)
+    
+    labels = scipy.cluster.hierarchy.fcluster(aggl, 9, criterion="maxclust")
+    
+    sil = 0
+    n = len(set(labels))
+    if n > 1:
+        sil = silhouette_score(X , labels, metric=metric)
+    print("Linkage={}, Metric={}, Clusters={}, Silhouette={:.3}".format(linkage, metric, n, sil))
+    
+    
+linkages = ['complete', 'ward', 'single', 'centroid', 'average']
+metrics = ['euclidean', 'minkowski', 'cityblock', 'cosine', 'correlation', 'chebyshev', 'canberra', 'mahalanobis']
+
+for prod in list(itertools.product(linkages, metrics)):
+    
+    # Some combos are not allowed
+    if (prod[0] in ['ward', 'centroid']) and prod[1] != 'euclidean':
+        continue
+        
+    plot_agg(Xc, prod[0], prod[1])
+
+
+# In[ ]:
+
+
+
+
+
+# In[ ]:
+
+
+
+
+
+# In[ ]:
+
+
+
+

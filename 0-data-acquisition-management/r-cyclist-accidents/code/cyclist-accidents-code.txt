@@ -1,0 +1,508 @@
+############REGRESSION TIME##############################################
+library(brglm)
+library(plm)
+library(DescTools)
+library(car)
+library(ggcorrplot)
+acc_summary<-read.csv(file.choose())
+
+summary(acc_summary)
+head(acc_summary,5)
+str(acc_summary)
+view(acc_summary)
+
+#Transform Columns for Regression
+acc_summary$PPL_CNT<-acc_summary$DRIVERS_ALL_cnt+acc_summary$PASSENGER_cnt+acc_summary$PEDESTRIAN_cnt+acc_summary$CYCLIST_cnt
+acc_summary$MAJOR_FATAL<-ifelse((acc_summary$BIC_INJURY_MAJOR+acc_summary$BIC_INJURY_FATAL)>0,1,0)
+acc_summary$DRIV_ALCOHOL<-acc_summary$DRIV_AlCOHOL
+acc_summary$BIC_ACTN_TURN_RIGHT<-acc_summary$BIC_ACTN_TURN_Right
+acc_summary$BIC_INJURY_MAJOR<-(acc_summary$BIC_INJURY_MAJOR_FATAL-acc_summary$BIC_INJURY_FATAL)
+acc_summary$DRIV_AlCOHOL=NULL
+acc_summary$BIC_ACTN_TURN_Right=NULL
+acc_summary$UNDER44<-ifelse(acc_summary$AGE_REF_CODE>9,0,1)
+acc_summary$BIC_ACTN_TURNING<- ifelse((acc_summary$BIC_ACTN_TURN_U+acc_summary$BIC_ACTN_TURN_LEFT+acc_summary$BIC_ACTN_TURN_RIGHT)>0,1,0)
+acc_summary$RUSHHOUR_MOR<-ifelse(acc_summary$Hour<11 & acc_summary$Hour>7, 1,0)
+acc_summary$RUSHHOUR_NI<-ifelse(acc_summary$Hour<19 & acc_summary$Hour>15,1,0)
+acc_summary$BURBS<-ifelse((acc_summary$WARD_4+acc_summary$WARD_9+acc_summary$WARD_10+acc_summary$WARD_11+acc_summary$WARD_12+acc_summary$WARD_13+acc_summary$WARD_14>0), 0, 1)
+
+#Data only for the regression put in a data frame
+regr_summar <- select(acc_summary,YEAR,RUSHHOUR_MOR, RUSHHOUR_NI, FATAL_NO,DRIV_TRAFFIC_VIOLATION,DRIV_AGGRO,DRIV_SPEED,DRIV_DISTRACT,DRIV_ALCOHOL,BIC_TRAFFIC_VIOLATION, BIC_AGGRO, BIC_SPEED,
+                      BIC_LOSS_CTRL, BIC_ALCOHOL, BIC_DISTRACT, BIC_DRUGS, BIC_DISABILITY, BIC_FATIGUE, PED_TRAFFIC_VIOLATION, PED_STNARY, PED_CROSSING, VEH_TURNING,
+                      VEH_STATIONARY,VEH_LANE_CHG, VEH_INIT_OR_STOP, wind_speed, relative_humidity, temperature, visibility_value, BIC_INJURY_MAJOR_FATAL, BIC_INJURY_FATAL,
+                      BIC_INJURY_other, ROAD_WET, TRAFFIC_CNTRL, VIS_NOT_CLEAR, UNDER44, BIC_ACTN_TURNING, BIC_ACTN_FORWARD, BIC_ACTN_TURN_U, BIC_ACTN_TURN_LEFT, BIC_ACTN_STOPPED,
+                      BIC_ACTN_OTHER, WARD_1, WARD_2, WARD_3, WARD_4, WARD_5, WARD_6, WARD_7, WARD_8, WARD_9, WARD_10, WARD_11, WARD_12, WARD_13, WARD_14,
+                      WARD_15, WARD_16, WARD_17, WARD_18, WARD_19, WARD_20, WARD_21, WARD_22, WARD_23, WARD_24, WARD_25, PPL_CNT, BIC_INJURY_MAJOR, BIC_ACTN_TURN_RIGHT, BURBS)
+
+view(regr_summar)
+str(regr_summar)
+summary(regr_summar)
+
+
+#Look at full correlation matrix
+install.packages("corrplot")
+library(corrplot)
+correlation <- cor(regr_summar, use = "everything", method = c("spearman"))
+corrplot(correlation, tl.cex = 0.5, tl.col = "black", method="circle")
+
+#Sample the Data 70% and UpSample the training data
+library(caret)
+library(tidyr)
+'%ni%' <- Negate('%in%')  # define 'not in' func
+str(regr_summar)
+set.seed(1989)
+sample_data<-createDataPartition(regr_summar$BIC_INJURY_MAJOR_FATAL, p=0.7, list = F)
+train_data<- regr_summar[sample_data, ]
+train_data$BIC_INJURY_MAJOR_FATAL <- factor(train_data$BIC_INJURY_MAJOR_FATAL, levels = c(0, 1))
+table(train_data$BIC_INJURY_MAJOR_FATAL)
+up_train_data<- upSample(x=train_data[,colnames(train_data) %ni% "BIC_INJURY_MAJOR_FATAL"], y=train_data$BIC_INJURY_MAJOR_FATAL, yname = "BIC_INJURY_MAJOR_FATAL")
+table(up_train_data$BIC_INJURY_MAJOR_FATAL)
+view(up_train_data) #training dataset
+
+test_data<- regr_summar[-sample_data, ] #Validation dataset
+
+#Convert BIC_INJURY_MAJOR_FATAL back to number
+up_train_data$BIC_INJURY_MAJOR_FATAL<-as.numeric(as.character(up_train_data$BIC_INJURY_MAJOR_FATAL))
+train_data$BIC_INJURY_MAJOR_FATAL<-as.numeric(as.character(train_data$BIC_INJURY_MAJOR_FATAL))
+sum(up_train_data$BIC_INJURY_MAJOR_FATAL) #testing that it worked
+
+view(up_train_data)
+
+#########REGRESSIONS ON INDIVIDUAL COMPONENTS THAT MIGHT BE RELEVANT FOR BACKGROUND########
+#Regression on Driver vs Pedestrian vs Bicycle Action
+violation_regr<-glm(BIC_INJURY_MAJOR_FATAL~DRIV_TRAFFIC_VIOLATION + 
+                      DRIV_AGGRO + 
+                      DRIV_SPEED +
+                      DRIV_DISTRACT +
+                      DRIV_ALCOHOL +
+                      PED_TRAFFIC_VIOLATION +
+                      PED_STNARY +
+                      PED_CROSSING +
+                      BIC_TRAFFIC_VIOLATION +
+                      BIC_AGGRO +
+                      BIC_SPEED +
+                      BIC_LOSS_CTRL +
+                      BIC_ALCOHOL +
+                      BIC_DISTRACT +
+                      BIC_DRUGS +
+                      BIC_DISABILITY +
+                      BIC_FATIGUE, family = "binomial", up_train_data)
+
+summary(violation_regr)
+PseudoR2(violation_regr, which = NULL)
+plot(violation_regr)
+
+linearHypothesis(violation_regr, c("PED_TRAFFIC_VIOLATION=0", "PED_STNARY=0"))
+linearHypothesis(violation_regr, c("DRIV_TRAFFIC_VIOLATION=0", "DRIV_DISTRACT=0", "DRIV_ALCOHOL=0"))
+linearHypothesis(violation_regr, c("BIC_TRAFFIC_VIOLATION=0", "BIC_AGGRO=0", "BIC_SPEED=0", "BIC_ALCOHOL=0", "BIC_DRUGS=0", "BIC_DISABILITY=0", "BIC_FATIGUE=0"))
+linearHypothesis(violation_regr,c("PED_TRAFFIC_VIOLATION=0", "PED_STNARY=0","DRIV_TRAFFIC_VIOLATION=0", "DRIV_DISTRACT=0", "DRIV_ALCOHOL=0","BIC_TRAFFIC_VIOLATION=0", "BIC_AGGRO=0", "BIC_SPEED=0", "BIC_ALCOHOL=0", "BIC_DRUGS=0", "BIC_DISABILITY=0", "BIC_FATIGUE=0"))
+
+violation_regr2<-glm(BIC_INJURY_MAJOR_FATAL~ 
+                      DRIV_AGGRO + 
+                      DRIV_SPEED +
+                      PED_CROSSING +
+                      BIC_LOSS_CTRL +
+                      BIC_DISTRACT, family = "binomial", up_train_data)
+
+summary(violation_regr2)
+PseudoR2(violation_regr2)
+
+linearHypothesis(violation_regr2, c("BIC_LOSS_CTRL=0", "BIC_DISTRACT=0"))
+
+violation_regr3<-glm(BIC_INJURY_MAJOR_FATAL~
+                       DRIV_AGGRO +
+                       DRIV_SPEED +
+                       PED_CROSSING, family = "binomial", up_train_data)
+
+summary(violation_regr3)
+PseudoR2(violation_regr3)
+
+#Regression on Turns
+turns_regr<-glm(BIC_INJURY_MAJOR_FATAL ~ 
+                                   VEH_TURNING +
+                                   VEH_STATIONARY +
+                                   VEH_LANE_CHG +
+                                   VEH_INIT_OR_STOP +
+                                   BIC_ACTN_FORWARD +
+                                   BIC_ACTN_TURN_U +
+                                   BIC_ACTN_TURN_LEFT +
+                                   BIC_ACTN_TURN_RIGHT +
+                                   BIC_ACTN_STOPPED, family = "binomial", up_train_data)
+
+summary(turns_regr)
+PseudoR2(turns_regr)
+
+#Regression on Weather
+weather_regr<-glm(BIC_INJURY_MAJOR_FATAL ~ wind_speed +
+                                     relative_humidity +
+                                     temperature +
+                                     ROAD_WET +
+                                     visibility_value, family = "binomial", up_train_data)
+
+summary(weather_regr)
+PseudoR2(weather_regr)
+
+#Regression on Wards
+wards_regr<-glm(BIC_INJURY_MAJOR_FATAL ~ 
+                                   WARD_1 + WARD_2 +
+                                   WARD_3 + WARD_4 +
+                                   WARD_5 + WARD_6 +
+                                   WARD_7 + WARD_8 +
+                                   WARD_9 + WARD_10 +
+                                   WARD_11 + WARD_12 +
+                                   WARD_13 + WARD_14 +
+                                   WARD_15 + WARD_16 +
+                                   WARD_17 + WARD_18 +
+                                   WARD_19 + WARD_20 +
+                                   WARD_21 + WARD_22 +
+                                   WARD_23 + WARD_24, family = "binomial", up_train_data)
+
+summary(wards_regr)
+PseudoR2(wards_regr)
+colSums(up_train_data)
+
+#Just the central wards
+wards_regr2<-glm(BIC_INJURY_MAJOR_FATAL ~ 
+                  WARD_4 +
+                  WARD_9 + WARD_10 +
+                  WARD_11 + WARD_12 +
+                  WARD_13 + WARD_14, family = "binomial", up_train_data)
+
+summary(wards_regr2)
+PseudoR2(wards_regr2)
+
+#Above Average Wards
+wards_regr3<-glm(BIC_INJURY_MAJOR_FATAL ~ 
+                  WARD_1 + 
+                  WARD_3 + WARD_7 +
+                  WARD_9 + WARD_10 +
+                  WARD_11 + WARD_12 +
+                  WARD_13 + WARD_14, family = "binomial", up_train_data)
+
+summary(wards_regr3)
+PseudoR2(wards_regr3)
+
+wards_test<-glm(BIC_INJURY_MAJOR_FATAL ~ 
+                  WARD_1 + WARD_2 +
+                  WARD_3 + WARD_4 +
+                  WARD_5 + WARD_6 +
+                  WARD_7 + WARD_8 +
+                  WARD_9 + WARD_10 +
+                  WARD_11 + WARD_12 +
+                  WARD_13 + WARD_14 +
+                  WARD_15 + WARD_16 +
+                  WARD_17 + WARD_18 +
+                  WARD_19 + WARD_20 +
+                  WARD_21 + WARD_22 +
+                  WARD_23 + WARD_24, family = "binomial", up_train_data)
+
+summary(wards_test)
+PseudoR2(wards_test)
+
+linearHypothesis(wards_test, c("WARD_1=0", "WARD_2=0"))
+
+#####REGRESSION EQUATIONS USING TTT METHODOLOGY#####
+everything_regr<-glm(BIC_INJURY_MAJOR_FATAL ~ 
+                           RUSHHOUR_MOR +
+                           RUSHHOUR_NI +
+                           DRIV_TRAFFIC_VIOLATION + 
+                           DRIV_AGGRO + 
+                           DRIV_SPEED +
+                           DRIV_DISTRACT +
+                           DRIV_ALCOHOL +
+                           PED_TRAFFIC_VIOLATION +
+                           PED_STNARY +
+                           PED_CROSSING +
+                           BIC_TRAFFIC_VIOLATION +
+                           BIC_AGGRO +
+                           BIC_SPEED +
+                           BIC_LOSS_CTRL +
+                           BIC_ALCOHOL +
+                           BIC_DISTRACT +
+                           BIC_DRUGS +
+                           BIC_DISABILITY +
+                           BIC_FATIGUE +
+                           VEH_TURNING +
+                           VEH_STATIONARY +
+                           VEH_LANE_CHG +
+                           VEH_INIT_OR_STOP +
+                           BIC_ACTN_FORWARD +
+                           BIC_ACTN_TURN_U +
+                           BIC_ACTN_TURN_LEFT +
+                           BIC_ACTN_TURN_RIGHT +
+                           BIC_ACTN_STOPPED +
+                           wind_speed +
+                           relative_humidity +
+                           temperature +
+                           ROAD_WET +
+                           visibility_value +
+                           WARD_1 + WARD_2 +
+                           WARD_3 + WARD_4 +
+                           WARD_5 + WARD_6 +
+                           WARD_7 + WARD_8 +
+                           WARD_9 + WARD_10 +
+                           WARD_11 + WARD_12 +
+                           WARD_13 + WARD_14 +
+                           WARD_15 + WARD_16 +
+                           WARD_17 + WARD_18 +
+                           WARD_19 + WARD_20 +
+                           WARD_21 + WARD_22 +
+                           WARD_23 + WARD_24, family="binomial", up_train_data)
+
+summary(everything_regr)
+PseudoR2(everything_regr)
+
+colSums(up_train_data)
+
+#Convert Coefficients to odds ratio and probabilities
+odd<-exp(coef(everything_regr))
+prob <- (odd / (1 + odd))
+format(prob,scientific = F)
+
+#Remove all below average wards and some redundant variables 
+everything_regr2<-glm(BIC_INJURY_MAJOR_FATAL ~
+                        RUSHHOUR_MOR +
+                        RUSHHOUR_NI +
+                        DRIV_TRAFFIC_VIOLATION + 
+                       DRIV_AGGRO + 
+                       DRIV_SPEED +
+                       DRIV_DISTRACT +
+                       DRIV_ALCOHOL +
+                       PED_TRAFFIC_VIOLATION +
+                       PED_CROSSING +
+                       BIC_TRAFFIC_VIOLATION +
+                       BIC_AGGRO +
+                       BIC_SPEED +
+                       BIC_LOSS_CTRL +
+                       BIC_ALCOHOL +
+                       BIC_DISTRACT +
+                       BIC_DRUGS +
+                       BIC_DISABILITY +
+                       BIC_FATIGUE +
+                       VEH_TURNING +
+                       VEH_STATIONARY +
+                       VEH_LANE_CHG +
+                       VEH_INIT_OR_STOP +
+                       BIC_ACTN_FORWARD +
+                       BIC_ACTN_TURNING +
+                       BIC_ACTN_STOPPED +
+                       wind_speed +
+                       temperature +
+                       ROAD_WET +
+                       visibility_value +
+                       PPL_CNT +
+                       WARD_1 + 
+                       WARD_3 + WARD_7 +
+                       WARD_9 + WARD_10 +
+                       WARD_11 + WARD_12 +
+                       WARD_13 + WARD_14 , family="binomial", up_train_data)
+
+summary(everything_regr2)
+PseudoR2(everything_regr2)
+
+exp(coef(everything_regr))
+exp(coef(everything_regr2))
+
+
+#Remove more redundancies
+everything_regr3<-glm(BIC_INJURY_MAJOR_FATAL ~ 
+                        RUSHHOUR_MOR +
+                        RUSHHOUR_NI +
+                        UNDER44 +
+                        DRIV_TRAFFIC_VIOLATION + 
+                        DRIV_AGGRO + 
+                        DRIV_SPEED +
+                        DRIV_DISTRACT +
+                        DRIV_ALCOHOL +
+                        PED_TRAFFIC_VIOLATION +
+                        PED_CROSSING +
+                        BIC_TRAFFIC_VIOLATION +
+                        BIC_AGGRO +
+                        BIC_SPEED +
+                        BIC_LOSS_CTRL +
+                        BIC_ALCOHOL +
+                        BIC_DISTRACT +
+                        BIC_DRUGS +
+                        BIC_DISABILITY +
+                        BIC_FATIGUE +
+                        VEH_TURNING +
+                        VEH_STATIONARY +
+                        VEH_LANE_CHG +
+                        VEH_INIT_OR_STOP +
+                        BIC_ACTN_FORWARD +
+                        BIC_ACTN_TURNING +
+                        BIC_ACTN_STOPPED +
+                        wind_speed +
+                        temperature +
+                        ROAD_WET +
+                        visibility_value +
+                        PPL_CNT +
+                        WARD_1 + WARD_2 +
+                        WARD_3 + WARD_4 +
+                        WARD_5 + WARD_6 +
+                        WARD_7 + WARD_8 +
+                        WARD_9 + WARD_10 +
+                        WARD_11 + WARD_12 +
+                        WARD_13 + WARD_14 +
+                        WARD_15 + WARD_16 +
+                        WARD_17 + WARD_18 +
+                        WARD_19 + WARD_20 +
+                        WARD_21 + WARD_22 +
+                        WARD_23 + WARD_24, family="binomial", up_train_data)
+   
+summary(everything_regr3)
+PseudoR2(everything_regr3)
+plot(everything_regr3)
+
+
+everything_data <- select(up_train_data,BIC_INJURY_MAJOR_FATAL, RUSHHOUR_MOR, RUSHHOUR_NI, UNDER44, DRIV_TRAFFIC_VIOLATION, DRIV_AGGRO,
+                        DRIV_SPEED, DRIV_DISTRACT, DRIV_ALCOHOL, PED_TRAFFIC_VIOLATION, PED_CROSSING, BIC_TRAFFIC_VIOLATION, BIC_AGGRO, BIC_SPEED, 
+                        BIC_LOSS_CTRL, BIC_ALCOHOL, BIC_DISTRACT, VEH_STATIONARY, VEH_LANE_CHG, VEH_INIT_OR_STOP, BIC_ACTN_FORWARD, BIC_ACTN_TURNING, BIC_ACTN_STOPPED, wind_speed,
+                        temperature, ROAD_WET, visibility_value, PPL_CNT, WARD_1,WARD_2, WARD_3, WARD_4, WARD_5, WARD_6, WARD_7, WARD_8, WARD_9, WARD_10, WARD_11, WARD_12, WARD_13, WARD_14,
+                        WARD_15, WARD_16, WARD_17, WARD_18, WARD_19, WARD_20, WARD_21, WARD_22, WARD_23, WARD_24)
+
+correlation <- cor(everything_data, use = "everything", method = c("spearman"))
+corrplot(correlation, tl.cex = 0.5, tl.col = "black", method="circle")
+
+#Test Joint Significance of Wards with p(x) > 0.9
+linearHypothesis(everything_regr3, c("WARD_17=0", "WARD_21=0", "WARD_16=0"))
+
+#Remove more redundancies
+everything_regr4<-glm(BIC_INJURY_MAJOR_FATAL ~ 
+                        RUSHHOUR_MOR +
+                        RUSHHOUR_NI +
+                        UNDER44 +
+                        DRIV_TRAFFIC_VIOLATION + 
+                        DRIV_AGGRO +
+                        DRIV_DISTRACT +
+                        DRIV_ALCOHOL +
+                        PED_TRAFFIC_VIOLATION +
+                        PED_CROSSING +
+                        BIC_TRAFFIC_VIOLATION +
+                        BIC_AGGRO +
+                        BIC_SPEED +
+                        BIC_LOSS_CTRL +
+                        BIC_ALCOHOL +
+                        BIC_DISTRACT +
+                        BIC_DRUGS +
+                        BIC_DISABILITY +
+                        BIC_FATIGUE +
+                        VEH_TURNING +
+                        VEH_STATIONARY +
+                        VEH_LANE_CHG +
+                        VEH_INIT_OR_STOP +
+                        BIC_ACTN_FORWARD +
+                        BIC_ACTN_TURNING +
+                        BIC_ACTN_STOPPED +
+                        wind_speed +
+                        temperature +
+                        ROAD_WET +
+                        visibility_value +
+                        PPL_CNT +
+                        WARD_1 + WARD_2 +
+                        WARD_3 + WARD_4 +
+                        WARD_5 + WARD_6 +
+                        WARD_7 + WARD_8 +
+                        WARD_9 + WARD_10 +
+                        WARD_11 + WARD_12 +
+                        WARD_13 + WARD_14 +
+                        WARD_15 + WARD_16 + WARD_17 +
+                        WARD_18 + WARD_19 +
+                        WARD_19 + WARD_20 +
+                        WARD_21 + WARD_22 +
+                        WARD_23 + WARD_24, family="binomial", up_train_data)
+
+
+str(up_train_data)
+summary(everything_regr4)
+PseudoR2(everything_regr4)
+plot(everything_regr4)
+
+#Convert Coefficients from logit to odds ratio and probability 
+
+odd<-exp(coef(everything_regr3))
+prob <- (odd / (1 + odd))
+format(prob,scientific = F)
+round(prob, digits = 4)
+
+#Test Accuracy of Regression on test data set
+pred_mod <- predict(everything_regr3, newdata = test_data, type = "response")
+pred_mod
+
+
+y_pred_num <- ifelse(pred_mod > 0.5, 1, 0)
+y_pred_num
+y_pred <- factor(y_pred_num, levels=c(0, 1))
+y_act <- train_data$BIC_INJURY_MAJOR_FATAL
+
+
+mean(y_pred_num) 
+mean(y_act)
+mean(y_pred_num == y_act) #Resulting accuracy
+
+
+
+####TEST TEST#####
+test_wards<-glm(BIC_INJURY_MAJOR_FATAL ~ 
+                        RUSHHOUR_MOR +
+                        RUSHHOUR_NI +
+                        UNDER44 +
+                        DRIV_TRAFFIC_VIOLATION + 
+                        DRIV_AGGRO +
+                        DRIV_DISTRACT +
+                        DRIV_ALCOHOL +
+                        PED_TRAFFIC_VIOLATION +
+                        PED_CROSSING +
+                        BIC_TRAFFIC_VIOLATION +
+                        BIC_AGGRO +
+                        BIC_SPEED +
+                        BIC_LOSS_CTRL +
+                        BIC_ALCOHOL +
+                        BIC_DISTRACT +
+                        BIC_DRUGS +
+                        BIC_DISABILITY +
+                        BIC_FATIGUE +
+                        VEH_TURNING +
+                        VEH_STATIONARY +
+                        VEH_LANE_CHG +
+                        VEH_INIT_OR_STOP +
+                        BIC_ACTN_FORWARD +
+                        BIC_ACTN_TURNING +
+                        BIC_ACTN_STOPPED +
+                        wind_speed +
+                        temperature +
+                        ROAD_WET +
+                        visibility_value +
+                        PPL_CNT +
+                        BURBS, family="binomial", up_train_data)
+
+summary(test_wards)
+odd<-exp(coef(test_wards))
+format(odd, scientific = F)
+prob <- (odd / (1 + odd))
+format(prob,scientific = F)
+round(prob, digits = 4)
+
+burbs_data <- select(up_train_data,BIC_INJURY_MAJOR_FATAL, RUSHHOUR_MOR, RUSHHOUR_NI, UNDER44, DRIV_TRAFFIC_VIOLATION, DRIV_AGGRO,
+                          DRIV_SPEED, DRIV_DISTRACT, DRIV_ALCOHOL, PED_TRAFFIC_VIOLATION, PED_CROSSING, BIC_TRAFFIC_VIOLATION, BIC_AGGRO, BIC_SPEED, 
+                          BIC_LOSS_CTRL, BIC_ALCOHOL, BIC_DISTRACT, VEH_STATIONARY, VEH_LANE_CHG, VEH_INIT_OR_STOP, BIC_ACTN_FORWARD, BIC_ACTN_TURNING, BIC_ACTN_STOPPED, wind_speed,
+                          temperature, ROAD_WET, visibility_value, PPL_CNT, BURBS)
+
+correlation <- cor(burbs_data, use = "everything", method = c("spearman"))
+corrplot(correlation, tl.cex = 0.5, tl.col = "black", method="circle")
+
+#Test Accuracy of Wards
+pred_mod <- predict(test_wards, newdata = test_data, type = "response")
+pred_mod
+
+
+y_pred_num <- ifelse(pred_mod > 0.5, 1, 0)
+y_pred_num
+y_pred <- factor(y_pred_num, levels=c(0, 1))
+y_act <- train_data$BIC_INJURY_MAJOR_FATAL
+
+
+mean(y_pred_num) 
+mean(y_act)
+mean(y_pred_num == y_act) #Resulting accuracy
+
+
